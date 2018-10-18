@@ -36,16 +36,7 @@ import java.io.File;
 import java.io.IOException;
 import java.lang.Thread.State;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -1754,34 +1745,63 @@ public class ExecutorManager extends EventHandler implements
     private Executor getUserSpecifiedExecutor(final ExecutionOptions options,
         final int executionId) {
       Executor executor = null;
-      if (options != null
-          && options.getFlowParameters() != null
-          && options.getFlowParameters().containsKey(
-          ExecutionOptions.USE_EXECUTOR)) {
-        try {
-          final int executorId =
-              Integer.valueOf(options.getFlowParameters().get(
-                  ExecutionOptions.USE_EXECUTOR));
-          executor = fetchExecutor(executorId);
+      if (options != null && options.getFlowParameters() != null) {
+        if (options.getFlowParameters().containsKey(ExecutionOptions.USE_EXECUTOR)) {
+          try {
+            final int executorId =
+                    Integer.valueOf(options.getFlowParameters().get(
+                            ExecutionOptions.USE_EXECUTOR));
+            executor = fetchExecutor(executorId);
 
-          if (executor == null) {
-            logger
-                .warn(String
-                    .format(
-                        "User specified executor id: %d for execution id: %d is not active, Looking up db.",
-                        executorId, executionId));
-            executor = ExecutorManager.this.executorLoader.fetchExecutor(executorId);
             if (executor == null) {
               logger
-                  .warn(String
-                      .format(
-                          "User specified executor id: %d for execution id: %d is missing from db. Defaulting to availableExecutors",
-                          executorId, executionId));
+                      .warn(String
+                              .format(
+                                      "User specified executor id: %d for execution id: %d is not active, Looking up db.",
+                                      executorId, executionId));
+              executor = ExecutorManager.this.executorLoader.fetchExecutor(executorId);
+              if (executor == null) {
+                logger
+                        .warn(String
+                                .format(
+                                        "User specified executor id: %d for execution id: %d is missing from db. Defaulting to availableExecutors",
+                                        executorId, executionId));
+              }
+            }
+          } catch (final ExecutorManagerException ex) {
+            logger.error("Failed to fetch user specified executor for exec_id = "
+                    + executionId, ex);
+          }
+        }else if (options.getFlowParameters().containsKey(ExecutionOptions.EXECUTOR_HOST_WEIGHT)){
+          String[] weights = options.getFlowParameters().get(ExecutionOptions.EXECUTOR_HOST_WEIGHT).split(",", -1);
+          TreeMap<String, Integer> host_weight_map = new TreeMap<>();
+          Map<String, Executor> active_executor = new HashMap<>();
+          for(Executor e : activeExecutors){
+            active_executor.put(e.getHost(), e);
+          }
+
+          int total_weights = 0;
+          for(String weight : weights){
+            if(weight.indexOf(":") > 0 && weight.split(":").length == 2){
+              String[] key_values = weight.split(":");
+              if(active_executor.keySet().contains(key_values[0])){
+                total_weights += Integer.valueOf(key_values[1]);
+                host_weight_map.put(key_values[0], Integer.valueOf(key_values[1]));
+              }
             }
           }
-        } catch (final ExecutorManagerException ex) {
-          logger.error("Failed to fetch user specified executor for exec_id = "
-              + executionId, ex);
+
+          if(total_weights > 0){
+            int random_value = new Random().nextInt(total_weights);
+            int weight = 0;
+            for(String host : host_weight_map.keySet()){
+              weight += host_weight_map.get(host);
+              if(random_value < weight){
+                executor = active_executor.get(host);
+                break;
+              }
+            }
+          }
         }
       }
       return executor;
